@@ -1,8 +1,11 @@
 name: Automatic
 
 on:
-  schedule:
-    - cron: '0 0 1 * *'
+  push:
+    branches:
+      - "master"
+#   schedule:
+#     - cron: '0 0 1 * *'
 
 permissions:
   contents: write
