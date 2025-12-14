@@ -1,0 +1,81 @@
+name: Automatic
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install wayland-scanner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wayland-protocols libwayland-dev
+
+      - name: Clone wayland-protocols repository
+        run: |
+          git clone https://gitlab.freedesktop.org/wayland/wayland-protocols.git
+          cd wayland-protocols
+          LATEST_COMMIT=$(git rev-parse HEAD)
+          echo "LATEST_COMMIT=$LATEST_COMMIT" >> $GITHUB_ENV
+          echo "Latest commit is $LATEST_COMMIT"
+
+      - name: Generate protocol files
+        run: |
+          mkdir -p generated
+
+          cd wayland-protocols/stable/xdg-shell
+          wayland-scanner client-header xdg-shell.xml shell.h
+          wayland-scanner private-code xdg-shell.xml shell.c
+          mv shell.h shell.c ../../../generated/
+
+          cd ../../unstable/xdg-decoration
+          wayland-scanner client-header xdg-decoration-unstable-v1.xml decoration.h
+          wayland-scanner private-code xdg-decoration-unstable-v1.xml decoration.c
+          mv decoration.h decoration.c ../../../generated/
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          CHANGED=false
+
+          for file in shell.h shell.c decoration.h decoration.c; do
+            if [ ! -f "$file" ] || ! diff -q "generated/$file" "$file" > /dev/null 2>&1; then
+              echo "$file has changes."
+              CHANGED=true
+            fi
+          done
+
+          if [ "$CHANGED" = true ]; then
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+          else
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Replace files (if changed)
+        if: steps.check_changes.outputs.changes_detected == 'true'
+        run: |
+          cp generated/shell.h .
+          cp generated/shell.c .
+          cp generated/decoration.h .
+          cp generated/decoration.c .
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changes_detected == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add shell.h shell.c decoration.h decoration.c
+          git commit -m "Update Wayland protocol files (commit: ${LATEST_COMMIT:0:8})" || exit 0
+          git push
